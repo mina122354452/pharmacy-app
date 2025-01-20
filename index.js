@@ -10,6 +10,8 @@ const morgan = require("morgan");
 const cors = require("cors");
 const credentials = require("./middlewares/credentials.js");
 const corsOptions = require("./config/cors");
+const passport = require("passport");
+const session = require("express-session");
 
 const { notFound, errorHandler } = require("./middlewares/errorHandler");
 app.use(credentials);
@@ -18,7 +20,16 @@ app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
-
+require("./config/passport.js");
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET, //! change it
+    resave: false,
+    saveUninitialized: false,
+  })
+);
+app.use(passport.initialize());
+app.use(passport.session());
 app.use("/api/user", user);
 app.use(notFound);
 app.use(errorHandler);

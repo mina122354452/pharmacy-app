@@ -1,4 +1,6 @@
 const express = require("express");
+const passport = require("passport");
+
 const {
   createUser,
   verifyEmailToken,
@@ -17,6 +19,7 @@ const {
   updatePassword,
   forgotPasswordToken,
   resetPassword,
+  socialLogin,
 } = require("../controller/userCtrl.js");
 const { authMiddleware, isAdmin } = require("../middlewares/authMiddleware.js");
 const router = express.Router();
@@ -31,6 +34,20 @@ router.put("/block-user/:id", authMiddleware, isAdmin, blockUser);
 router.put("/unblock-user/:id", authMiddleware, isAdmin, unblockUser);
 //!put
 router.put("/Email-verification/:token", verifyEmail);
+router.get(
+  "/auth/google",
+  passport.authenticate("google", {
+    scope: ["email", "profile"],
+  })
+);
+
+// Google callback
+// Google authentication route
+router.get(
+  "/auth/google/callback",
+  passport.authenticate("google", { failureRedirect: "/login" }), // Passport adds user to req object
+  socialLogin // Only called if authentication is successful
+);
 
 router.get("/refresh", handleRefreshToken);
 router.get("/all-users", authMiddleware, isAdmin, getallUser);

@@ -29,13 +29,14 @@ var userSchema = new mongoose.Schema(
 
     password: {
       type: String,
-      required: true,
+      required: function () {
+        return !this.googleId; // Password is required only if googleId is not present
+      },
     },
     role: {
       type: String,
       default: "user",
     },
-
     isBlocked: {
       type: Boolean,
       default: false,
@@ -48,9 +49,16 @@ var userSchema = new mongoose.Schema(
     emailVerifyExpires: Date,
     emailConfirm: {
       type: Boolean,
-      default: false,
+      default: function () {
+        return this.googleId ? true : false;
+      },
     },
 
+    googleId: {
+      type: String,
+      unique: true, // Ensure each Google ID is unique
+      sparse: true, // Allows multiple documents to have no googleId
+    },
     passwordChangedAt: Date,
     passwordResetToken: String,
     passwordResetExpires: Date,
@@ -65,7 +73,7 @@ userSchema.pre("save", async function (next) {
     const salt = await bcrypt.genSaltSync(10);
     this.password = await bcrypt.hash(this.password, salt);
   }
-  if (this.isModified("email")) {
+  if (this.isModified("email") && !this.googleId) {
     this.emailConfirm = false;
   }
 

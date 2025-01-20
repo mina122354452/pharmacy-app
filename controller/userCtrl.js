@@ -75,7 +75,6 @@ const loginUser = expressAsyncHandler(async (req, res) => {
         firstname: findUser?.firstName,
         lastname: findUser?.lastName,
         email: findUser?.email,
-        mobile: findUser?.mobile,
         token: generateToken(findUser?._id),
       });
     }
@@ -496,6 +495,48 @@ const resetPassword = expressAsyncHandler(async (req, res) => {
 });
 //! working -- logic not complete
 
+const socialLogin = expressAsyncHandler(async (req, res) => {
+  console.log("Google profile received:", req.user);
+
+  try {
+    const user = req.user; // Passport adds the authenticated user to req.user
+
+    if (!user) {
+      return res.status(400).json({ message: "User not found" });
+    }
+
+    // Generate access token
+    const accessToken = generateToken(user._id);
+
+    // Generate refresh token
+    const refreshToken = generateRefreshToken(user._id);
+
+    // Optionally, store refresh token in the database if needed
+    user.refreshToken = refreshToken;
+    await user.save(); // Save refresh token to user record (optional)
+
+    // Set the refresh token in a secure cookie
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: true, // Set to true in production
+      maxAge: 72 * 60 * 60 * 1000, // 3 days
+    });
+
+    // Send the response with the access token and user info
+    res.status(200).json({
+      id: user._id,
+      firstname: user.firstName,
+      lastname: user.lastName,
+      email: user.email,
+      accessToken: accessToken, // Send the access token
+    });
+  } catch (error) {
+    console.log("Error details:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = {
   createUser,
   verifyEmailToken,
@@ -514,4 +555,5 @@ module.exports = {
   updatePassword,
   forgotPasswordToken,
   resetPassword,
+  socialLogin,
 };
