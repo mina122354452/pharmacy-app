@@ -1,0 +1,51 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+
+    image: node-app
+    ports:
+      - "${PORT}:${PORT}"
+
+    networks:
+      my_local_network:
+        ipv4_address: 192.168.100.10
+    depends_on:
+      - mongo
+    env_file:
+      - .env
+    container_name: myapp
+    #   # for dev
+    # volumes:
+    #   - .:/app
+    #   - /app/node_modules
+    # volumes:
+    #   - type: bind
+    #     source: ./
+    #     target: /app/
+    #   - type: volume
+    #     target: /app/node_modules
+    develop:
+      watch:
+        - action: sync+restart
+          path: .
+          target: /app
+        - action: rebuild
+          path: package.json
+
+  mongo:
+    image: mongo:latest
+    networks:
+      my_local_network:
+        ipv4_address: 192.168.100.11
+    ports:
+      - "27017:27017"
+    container_name: db
+networks:
+  my_local_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.100.0/24
