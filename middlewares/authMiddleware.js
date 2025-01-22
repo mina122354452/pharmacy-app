@@ -2,6 +2,7 @@ const User = require("../models/userModel");
 
 const jwt = require("jsonwebtoken");
 const asyncHandler = require("express-async-handler");
+const pharmacyModel = require("../models/pharmacyModel");
 
 const authMiddleware = asyncHandler(async (req, res, next) => {
   let token;
@@ -44,7 +45,25 @@ const isAdmin = asyncHandler(async (req, res, next) => {
   }
 });
 
+const isOwner = asyncHandler(async (req, res, next) => {
+  const { pharmacyId } = req.params;
+
+  // Find the pharmacy to be removed
+  const pharmacy = await pharmacyModel.findById(pharmacyId);
+  if (!pharmacy) {
+    return res.status(404).json({ message: "Pharmacy not found" });
+  }
+  // Check if the user is the owner of the pharmacy
+  if (pharmacy.owner.toString() !== req.user._id.toString()) {
+    return res
+      .status(403)
+      .json({ message: "Not authorized to access this pharmacy" });
+  }
+  next();
+});
+
 module.exports = {
   authMiddleware,
   isAdmin,
+  isOwner,
 };

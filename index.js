@@ -4,8 +4,9 @@ const cookieParser = require("cookie-parser");
 const app = express();
 require("express-async-handler");
 const dotenv = require("dotenv").config();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 const user = require("./routes/userRoute.js");
+const pharmacy = require("./routes/pharmacyRoute.js");
 const morgan = require("morgan");
 const cors = require("cors");
 const credentials = require("./middlewares/credentials.js");
@@ -31,6 +32,7 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 app.use("/api/user", user);
+app.use("/api/pharmacy", pharmacy);
 app.use(notFound);
 app.use(errorHandler);
 async function start() {

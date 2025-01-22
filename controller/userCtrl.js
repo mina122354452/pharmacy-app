@@ -15,11 +15,14 @@ const createUser = expressAsyncHandler(async (req, res) => {
     const { firstname, lastname, email, password } = req.body;
     const findUser = await User.findOne({ email });
     if (!findUser) {
+      const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 20 days in the future
+
       const newUser = await User.create({
         firstname,
         lastname,
         email,
         password,
+        toBeDeletedAt: thirtyDaysFromNow, // Schedule deletion
       });
       if (newUser.emailConfirm === false) {
         verifyEmailToken(req, res);
@@ -107,7 +110,8 @@ const verifyEmailToken = expressAsyncHandler(async (req, res) => {
 
       res.status(201).json({
         status: "successfully",
-        message: "we sent email verification",
+        message:
+          "we sent email verification, Note: (if you didn't verify the email during 30 days, User will be deleted)",
       });
     } else {
       console.log(55);
@@ -135,11 +139,13 @@ const verifyEmail = expressAsyncHandler(async (req, res) => {
   user.emailConfirm = true;
   user.emailVerify = undefined;
   user.emailVerifyExpires = undefined;
+  user.toBeDeletedAt = null; //!!!
+
   await user.save();
   if (user.emailConfirm === true) {
     res.status(202).json({
       status: "successfully",
-      message: "user created and verified successfully",
+      message: "user email verified successfully, you can login now",
     });
   }
 });
@@ -352,9 +358,16 @@ const updateUser = expressAsyncHandler(async (req, res) => {
     if (req?.body?.firstName) user.firstname = req?.body?.firstName;
     if (req?.body?.lastName) user.lastname = req?.body?.lastName;
     if (req?.body?.email) {
-      user.email = req?.body?.email;
-      await user.save();
-      verifyEmailToken(req, res);
+      if (req?.body?.email === user.email) {
+        res.status(200).json({
+          status: "Not Modified",
+          message: "this email is already your email",
+        });
+      } else {
+        user.email = req?.body?.email;
+        await user.save();
+        verifyEmailToken(req, res);
+      }
     } else {
       user.save();
       res.status(202).json({ status: "success", message: "updated user data" });
@@ -536,7 +549,44 @@ const socialLogin = expressAsyncHandler(async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+const socialLogout = expressAsyncHandler((req, res) => {
+  try {
+    // Logout the user by clearing the session
+    req.logout((err) => {
+      if (err) {
+        return res
+          .status(500)
+          .json({ message: "Failed to log out", error: err });
+      }
 
+      // Clear the refresh token cookie
+      res.clearCookie("refreshToken", {
+        httpOnly: true,
+        sameSite: "strict",
+        secure: true, // Set to true in production
+      });
+
+      // Respond with a success message
+      res.status(200).json({ message: "Logged out successfully" });
+    });
+  } catch (error) {
+    console.log("Error details:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+const getUserPharmacies = expressAsyncHandler(async (req, res) => {
+  const { id } = req.user;
+  validateMongoDbId(id);
+  try {
+    const user = await User.findById(id)
+      .select("pharmacies -_id")
+      .populate("pharmacies");
+    res.status(200).json({ user });
+  } catch (error) {
+    console.log("Error details:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
 module.exports = {
   createUser,
   verifyEmailToken,
@@ -556,4 +606,6 @@ module.exports = {
   forgotPasswordToken,
   resetPassword,
   socialLogin,
+  socialLogout,
+  getUserPharmacies,
 };

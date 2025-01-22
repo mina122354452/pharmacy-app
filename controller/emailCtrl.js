@@ -12,7 +12,7 @@ const sendEmail = expressAsyncHandler(async (data) => {
   });
   const info = await transporter.sendMail({
     // FIXME: EDIT GMAIL
-    from: '"kenisity" <Mbsshy2008@gmail.com>', // sender address
+    from: '"pharmacy" <Mbsshy2008@gmail.com>', // sender address
     to: data.to, // list of receivers
     subject: data.subject, // Subject line
     text: data.text, // plain text body

@@ -62,11 +62,20 @@ var userSchema = new mongoose.Schema(
     passwordChangedAt: Date,
     passwordResetToken: String,
     passwordResetExpires: Date,
+    pharmacies: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Pharmacies",
+        default: null,
+      },
+    ],
+    toBeDeletedAt: { type: Date, default: null },
   },
   {
     timestamps: true,
   }
 );
+userSchema.index({ toBeDeletedAt: 1 }, { expireAfterSeconds: 0 });
 
 userSchema.pre("save", async function (next) {
   if (this.isModified("password")) {
@@ -75,6 +84,7 @@ userSchema.pre("save", async function (next) {
   }
   if (this.isModified("email") && !this.googleId) {
     this.emailConfirm = false;
+    this.toBeDeletedAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
   }
 
   next();
