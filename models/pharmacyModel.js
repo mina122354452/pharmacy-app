@@ -340,6 +340,100 @@ pharmacySchema.pre("save", async function (next) {
 
   next();
 });
+//-------------------------------
+
+// pharmacySchema.pre("save", function (next) {
+//   const days = [
+//     "monday",
+//     "tuesday",
+//     "wednesday",
+//     "thursday",
+//     "friday",
+//     "saturday",
+//     "sunday",
+//   ];
+
+//   // Validate shifts for each day
+//   for (const day of days) {
+//     const dayOpeningHours = this.openingHours[day];
+//     const shiftsForDay = dayOpeningHours.shifts;
+
+//     if (dayOpeningHours.open) {
+//       shiftsForDay.forEach((shift) => {
+//         // Ensure shift is within opening hours
+//         if (
+//           shift.start < dayOpeningHours.start ||
+//           shift.end > dayOpeningHours.end
+//         ) {
+//           return next(
+//             new Error(
+//               `Shift (${shift.start} - ${shift.end}) for ${day} is outside the operating hours (${dayOpeningHours.start} - ${dayOpeningHours.end}).`
+//             )
+//           );
+//         }
+
+//         // Ensure shift start is before shift end
+//         if (shift.start >= shift.end) {
+//           return next(
+//             new Error(
+//               `Shift start time (${shift.start}) must be earlier than end time (${shift.end}) for ${day}.`
+//             )
+//           );
+//         }
+//       });
+//     } else if (shiftsForDay.length > 0) {
+//       return next(new Error(`Shifts are not allowed on closed days (${day}).`));
+//     }
+//   }
+
+//   next();
+// });
+
+// pharmacySchema.pre("save", async function (next) {
+//   const days = [
+//     "monday",
+//     "tuesday",
+//     "wednesday",
+//     "thursday",
+//     "friday",
+//     "saturday",
+//     "sunday",
+//   ];
+
+//   for (const day of days) {
+//     const shifts = this.openingHours[day].shifts;
+
+//     for (let i = 0; i < shifts.length; i++) {
+//       const currentShift = shifts[i];
+//       const currentStart = parseInt(currentShift.start.replace(":", ""), 10);
+//       const currentEnd = parseInt(currentShift.end.replace(":", ""), 10);
+
+//       if (currentEnd <= currentStart) {
+//         return next(
+//           new Error(`Shift end time must be after start time for ${day}.`)
+//         );
+//       }
+
+//       for (let j = i + 1; j < shifts.length; j++) {
+//         const nextShift = shifts[j];
+//         const nextStart = parseInt(nextShift.start.replace(":", ""), 10);
+//         const nextEnd = parseInt(nextShift.end.replace(":", ""), 10);
+
+//         if (
+//           (currentStart < nextEnd && currentEnd > nextStart) ||
+//           (nextStart < currentEnd && nextEnd > currentStart)
+//         ) {
+//           return next(new Error(`Shifts cannot overlap on ${day}.`));
+//         }
+//       }
+//     }
+//   }
+
+//   next();
+// });
+
+//-------------------------------
+
 pharmacySchema.pre("save", function (next) {
   const days = [
     "monday",
@@ -351,82 +445,70 @@ pharmacySchema.pre("save", function (next) {
     "sunday",
   ];
 
+  const errors = []; // To accumulate validation errors
+
   // Validate shifts for each day
   for (const day of days) {
     const dayOpeningHours = this.openingHours[day];
     const shiftsForDay = dayOpeningHours.shifts;
 
     if (dayOpeningHours.open) {
+      // Ensure each shift is within operating hours and that start time is before end time
       shiftsForDay.forEach((shift) => {
-        // Ensure shift is within opening hours
+        // Check if the shift is within operating hours
         if (
           shift.start < dayOpeningHours.start ||
           shift.end > dayOpeningHours.end
         ) {
-          return next(
-            new Error(
-              `Shift (${shift.start} - ${shift.end}) for ${day} is outside the operating hours (${dayOpeningHours.start} - ${dayOpeningHours.end}).`
-            )
+          errors.push(
+            `Shift (${shift.start} - ${shift.end}) for ${day} is outside the operating hours (${dayOpeningHours.start} - ${dayOpeningHours.end}).`
           );
         }
 
         // Ensure shift start is before shift end
         if (shift.start >= shift.end) {
-          return next(
-            new Error(
-              `Shift start time (${shift.start}) must be earlier than end time (${shift.end}) for ${day}.`
-            )
+          errors.push(
+            `Shift start time (${shift.start}) must be earlier than end time (${shift.end}) for ${day}.`
           );
         }
       });
     } else if (shiftsForDay.length > 0) {
-      return next(new Error(`Shifts are not allowed on closed days (${day}).`));
+      // No shifts allowed on closed days
+      errors.push(`Shifts are not allowed on closed days (${day}).`);
     }
-  }
 
-  next();
-});
-
-pharmacySchema.pre("save", async function (next) {
-  const days = [
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-    "sunday",
-  ];
-
-  for (const day of days) {
-    const shifts = this.openingHours[day].shifts;
-
-    for (let i = 0; i < shifts.length; i++) {
-      const currentShift = shifts[i];
+    // Validate shift overlaps for each day
+    for (let i = 0; i < shiftsForDay.length; i++) {
+      const currentShift = shiftsForDay[i];
       const currentStart = parseInt(currentShift.start.replace(":", ""), 10);
       const currentEnd = parseInt(currentShift.end.replace(":", ""), 10);
 
       if (currentEnd <= currentStart) {
-        return next(
-          new Error(`Shift end time must be after start time for ${day}.`)
-        );
+        errors.push(`Shift end time must be after start time for ${day}.`);
       }
 
-      for (let j = i + 1; j < shifts.length; j++) {
-        const nextShift = shifts[j];
+      for (let j = i + 1; j < shiftsForDay.length; j++) {
+        const nextShift = shiftsForDay[j];
         const nextStart = parseInt(nextShift.start.replace(":", ""), 10);
         const nextEnd = parseInt(nextShift.end.replace(":", ""), 10);
 
+        // Check for overlapping shifts
         if (
           (currentStart < nextEnd && currentEnd > nextStart) ||
           (nextStart < currentEnd && nextEnd > currentStart)
         ) {
-          return next(new Error(`Shifts cannot overlap on ${day}.`));
+          errors.push(`Shifts cannot overlap on ${day}.`);
         }
       }
     }
   }
 
+  // If any validation errors exist, pass them to the next function
+  if (errors.length > 0) {
+    return next(new Error(errors.join(" "))); // Combine all errors into one string
+  }
+
+  // Proceed with the save if no errors
   next();
 });
 

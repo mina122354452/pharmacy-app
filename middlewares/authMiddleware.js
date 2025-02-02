@@ -9,30 +9,50 @@ const authMiddleware = asyncHandler(async (req, res, next) => {
   if (req?.headers?.authorization?.startsWith("Bearer")) {
     token = req.headers.authorization.split(" ")[1];
     try {
-      if (token) {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded?.id);
-        //FIXME:cutsom error handler
-        if (user.isBlocked == true) {
-          throw new Error("User is blocked");
-        }
-        if (user.emailConfirm == false) {
-          throw new Error("User is not verified , login again");
-        }
-        req.user = user;
-        next();
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const user = await User.findById(decoded?.id);
+      // Custom error handler
+      if (user.isBlocked) {
+        return res
+          .status(403)
+          .json({ success: false, status: "fail", error: "User is blocked" });
       }
+      if (!user.emailConfirm) {
+        return res.status(401).json({
+          status: "fail",
+          success: false,
+          error: "User is not verified, login again",
+        });
+      }
+      req.user = user;
+      next();
     } catch (error) {
-      //FIXME:cutsom error handler
-
-      throw new Error(
-        error == "JsonWebTokenError: invalid signature"
-          ? "Not Authorized token expired, Please Login again"
-          : error
-      );
+      if (error.name === "TokenExpiredError") {
+        return res.status(401).json({
+          status: "fail",
+          success: false,
+          error: "Token expired, Please Login again",
+        });
+      } else if (error.name === "JsonWebTokenError") {
+        return res.status(401).json({
+          status: "fail",
+          success: false,
+          error: "Invalid token, Please Login again",
+        });
+      } else {
+        return res.status(500).json({
+          status: "fail",
+          success: false,
+          error: error.message,
+        });
+      }
+      // Custom error handler
     }
   } else {
-    throw new Error("There is no token attached to header");
+    return res.status(401).json({
+      status: "fail",
+      error: "There is no token attached to header",
+    });
   }
 });
 const isAdmin = asyncHandler(async (req, res, next) => {
@@ -51,13 +71,19 @@ const isOwner = asyncHandler(async (req, res, next) => {
   // Find the pharmacy to be removed
   const pharmacy = await pharmacyModel.findById(pharmacyId);
   if (!pharmacy) {
-    return res.status(404).json({ message: "Pharmacy not found" });
+    return res.status(404).json({
+      status: "fail",
+      success: false,
+      message: "Pharmacy not found",
+    });
   }
   // Check if the user is the owner of the pharmacy
   if (pharmacy.owner.toString() !== req.user._id.toString()) {
-    return res
-      .status(403)
-      .json({ message: "Not authorized to access this pharmacy" });
+    return res.status(403).json({
+      status: "fail",
+      success: false,
+      message: "Not authorized to access this pharmacy",
+    });
   }
   next();
 });

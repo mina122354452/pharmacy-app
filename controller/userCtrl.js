@@ -9,14 +9,59 @@ const {
   generatePasswordResetMail,
   generateVerifyMail,
 } = require("../messages/email");
+
+const FRONTEND_HOST = process.env.HTTP_URL;
 const validateMongoDbId = require("../utils/validateMongodbId");
+const {
+  setAllUsersCache,
+  setUserDetailsCache,
+  setRestPasswordCache,
+  invalidateRestPasswordCache,
+  setPassTokenCache,
+  setEmailTokenCache,
+  setEmailVerificationCache,
+} = require("../utils/setUserCache");
+const redisClient = require("../config/redis");
 const createUser = expressAsyncHandler(async (req, res) => {
   try {
-    const { firstname, lastname, email, password } = req.body;
+    const { firstname, lastname, email, password, passConfirm } = req.body;
     const findUser = await User.findOne({ email });
     if (!findUser) {
       const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 20 days in the future
+      if (!firstname || !lastname || !email || !password || !passConfirm) {
+        return res.status(400).json({
+          status: "fail",
+          success: false,
+          error: "All fields are required",
+        });
+      } else if (password !== passConfirm) {
+        return res.status(400).json({
+          status: "fail",
+          success: false,
 
+          error: "Password does not match password confirmation",
+        });
+      }
+      const passwordRegex =
+        /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+      if (!passwordRegex.test(password)) {
+        return res.status(400).json({
+          status: "fail",
+          success: false,
+
+          error:
+            "Password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character",
+        });
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({
+          status: "fail",
+          success: false,
+
+          error: "Invalid email format",
+        });
+      }
       const newUser = await User.create({
         firstname,
         lastname,
@@ -28,38 +73,219 @@ const createUser = expressAsyncHandler(async (req, res) => {
         verifyEmailToken(req, res);
       } else {
         return res.status(201).json({
-          message: "User created",
+          status: "success",
+          success: true,
+
+          message: "User created successfully",
         });
       }
     } else {
-      if (findUser.emailConfirm === false) {
-        verifyEmailToken(req, res);
-      } else {
-        throw new Error("user is already exist");
-      }
+      return res.status(409).json({
+        status: "fail",
+        success: false,
+
+        error: "user already exists with the same email",
+      });
     }
   } catch (error) {
-    console.log("Error details:", error);
-    res.status(500).json({ error: error.message });
+    throw new Error(error);
   }
 });
 const loginUser = expressAsyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-  const findUser = await User.findOne({ email });
-  if (!findUser) {
-    throw new Error("there isn't exist user");
-  }
-  const passwordStatus = await findUser.isPasswordMatched(password);
+  try {
+    const { email, password } = req.body;
+    const findUser = await User.findOne({ email });
+    if (!findUser) {
+      return res.status(404).json({
+        success: false,
+        status: "fail",
 
-  if (findUser && passwordStatus) {
-    if (findUser.emailConfirm === false) {
-      verifyEmailToken(req, res);
-    } else if (findUser.isBlocked == true) {
-      throw new Error("User is blocked");
+        error: "User does not exist",
+      });
+    }
+    if (findUser?.googleId) {
+      return res.status(401).json({
+        status: "fail",
+        success: false,
+
+        error:
+          "User signs out of Google account without signing in with Google account",
+      });
+    }
+    const passwordStatus = await findUser.isPasswordMatched(password);
+
+    if (findUser && passwordStatus) {
+      if (findUser.emailConfirm === false) {
+        verifyEmailToken(req, res);
+      } else if (findUser.isBlocked == true) {
+        return res.status(403).json({
+          success: false,
+
+          status: "fail",
+          error: "User is blocked",
+        });
+      } else {
+        const refreshToken = await generateRefreshToken(findUser?.id);
+        const updateUser = await User.findByIdAndUpdate(
+          findUser?._id,
+          {
+            refreshToken: refreshToken,
+          },
+          {
+            new: true,
+          }
+        );
+        res.cookie("refreshToken", refreshToken, {
+          httpOnly: true,
+          sameSite: "strict",
+          secure: true,
+          maxAge: 72 * 60 * 60 * 1000, // 3 days
+        });
+        res.status(200).json({
+          status: "success",
+          success: true,
+
+          message: "User logged in successfully",
+          token: generateToken(findUser?._id),
+
+          user: {
+            firstname: updateUser.firstname,
+            lastname: updateUser.lastname,
+            email: updateUser.email,
+          },
+        });
+      }
     } else {
-      const refreshToken = await generateRefreshToken(findUser?.id);
+      return res.status(401).json({
+        status: "fail",
+        success: false,
+
+        error: "Invalid credentials",
+      });
+    }
+  } catch (error) {
+    throw new Error(error);
+  }
+});
+const verifyEmailToken = expressAsyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const cacheKey = `emailVerificationFor:${email}`; // Unique cache key for each user
+
+  const data = await redisClient.get(cacheKey);
+
+  if (data !== null) {
+    console.log("data:", data);
+
+    return res.json(JSON.parse(data));
+  }
+  console.log(req.body);
+
+  try {
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      let failResponse = {
+        success: false,
+        status: "fail",
+        message: "User Not Found With this email",
+      };
+      setEmailVerificationCache(email, failResponse);
+      return res.status(404).json(failResponse);
+    }
+
+    if (user.emailConfirm === false) {
+      const token = await user.verifyEmail();
+      await user.save();
+      // todo
+      let mail = await generateVerifyMail(token, user.firstname, user.lastname);
+
+      const data = {
+        to: email,
+        subject: "verify your Email",
+        html: mail,
+      };
+      console.log(process.env.password);
+      await sendEmail(data);
+      let successResponse = {
+        status: "success",
+        success: true,
+
+        message:
+          "we sent email verification, Note: (if you didn't verify the email during 30 days, User will be deleted)",
+      };
+      setEmailVerificationCache(email, successResponse);
+
+      res.status(200).json(successResponse);
+    } else {
+      let notModifiedResponse = {
+        success: true,
+        status: "Not Modified",
+        message: "your email is already verified",
+      };
+      setEmailVerificationCache(email, notModifiedResponse);
+
+      await res.status(200).json(notModifiedResponse);
+    }
+  } catch (error) {
+    throw new Error(error);
+  }
+});
+const verifyEmail = expressAsyncHandler(async (req, res) => {
+  try {
+    const { token } = req.params;
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+    const user = await User.findOne({
+      emailVerify: hashedToken,
+      emailVerifyExpires: {
+        $gt: Date.now(),
+      },
+    });
+
+    if (!user) {
+      let failResponse = {
+        success: false,
+        status: "fail",
+        error:
+          "Token expired or Invalid link verification, please try again later",
+      };
+      setEmailTokenCache(token, failResponse);
+      return res.status(400).json(failResponse);
+    }
+
+    user.emailConfirm = true;
+    user.emailVerify = undefined;
+    user.emailVerifyExpires = undefined;
+    user.toBeDeletedAt = null;
+
+    await user.save();
+
+    if (user.emailConfirm === true) {
+      let successResponse = {
+        status: "success",
+        success: true,
+
+        message: "User email verified successfully, you can login now",
+      };
+      setEmailTokenCache(token, successResponse);
+
+      res.status(202).json(successResponse);
+    }
+  } catch (error) {
+    throw new Error(error);
+  }
+});
+const loginAdmin = expressAsyncHandler(async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) throw new Error("No credentials");
+
+    const findAdmin = await User.findOne({ email });
+    if (findAdmin.role !== "admin") throw new Error("Not Authorized");
+    const passwordStatus = await findAdmin.isPasswordMatched(password);
+    if (findAdmin && passwordStatus) {
+      const refreshToken = await generateRefreshToken(findAdmin?.id);
       const updateUser = await User.findByIdAndUpdate(
-        findUser?._id,
+        findAdmin?._id,
         {
           refreshToken: refreshToken,
         },
@@ -71,175 +297,128 @@ const loginUser = expressAsyncHandler(async (req, res) => {
         httpOnly: true,
         sameSite: "strict",
         secure: true,
-        maxAge: 72 * 60 * 60 * 1000, // 3 days
+        maxAge: 72 * 60 * 60 * 1000,
       });
       res.status(200).json({
-        id: findUser?._id,
-        firstname: findUser?.firstName,
-        lastname: findUser?.lastName,
-        email: findUser?.email,
-        token: generateToken(findUser?._id),
-      });
-    }
-  } else {
-    //FIXME:cutsom error handler
-    throw new Error("Invalid credentials");
-  }
-});
-const verifyEmailToken = expressAsyncHandler(async (req, res) => {
-  const { email } = req.body;
-  console.log(req.body);
+        success: true,
 
-  const user = await User.findOne({ email });
-
-  if (!user) throw new Error("User Not Found With this email");
-  try {
-    if (user.emailConfirm === false) {
-      const token = await user.verifyEmail();
-      await user.save();
-      // todo
-      let mail = await generateVerifyMail(token, user.firstname, user.lastname);
-      console.log(token);
-      const data = {
-        to: email,
-        subject: "verify your Email",
-        html: mail,
-      };
-      console.log(process.env.password);
-      await sendEmail(data);
-
-      res.status(201).json({
-        status: "successfully",
-        message:
-          "we sent email verification, Note: (if you didn't verify the email during 30 days, User will be deleted)",
+        status: "success",
+        message: "Admin logged in successfully",
+        token: generateToken(findAdmin?._id),
+        user: {
+          id: findAdmin?._id,
+          firstname: findAdmin?.firstName,
+          lastname: findAdmin?.lastName,
+          email: findAdmin?.email,
+        },
       });
     } else {
-      console.log(55);
-
-      await res.status(200).json({
-        status: "Not Modified",
-        message: "your email is already verified",
+      res.status(401).json({
+        success: false,
+        status: "fail",
+        error: "Invalid credentials",
       });
     }
   } catch (error) {
     throw new Error(error);
   }
 });
-const verifyEmail = expressAsyncHandler(async (req, res) => {
-  const { token } = req.params;
-  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
-  const user = await User.findOne({
-    emailVerify: hashedToken,
-    emailVerifyExpires: {
-      $gt: Date.now(),
-    },
-  });
-  //FIXME:cutsom error handler
-  if (!user) throw new Error("token Expired,please try again later");
-  user.emailConfirm = true;
-  user.emailVerify = undefined;
-  user.emailVerifyExpires = undefined;
-  user.toBeDeletedAt = null; //!!!
-
-  await user.save();
-  if (user.emailConfirm === true) {
-    res.status(202).json({
-      status: "successfully",
-      message: "user email verified successfully, you can login now",
-    });
-  }
-});
-const loginAdmin = expressAsyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) throw Error("no credentials");
-
-  const findAdmin = await User.findOne({ email });
-  if (findAdmin.role !== "admin") throw new Error("Not Authorized");
-  const passwordStatus = await findAdmin.isPasswordMatched(password);
-  if (findAdmin && passwordStatus) {
-    const refreshToken = await generateRefreshToken(findAdmin?.id);
-    const updateUser = await User.findByIdAndUpdate(
-      findAdmin?._id,
-      {
-        refreshToken: refreshToken,
-      },
-      {
-        new: true,
-      }
-    );
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: true,
-      maxAge: 72 * 60 * 60 * 1000,
-    });
-    res.status(200).json({
-      id: findAdmin?._id,
-      firstname: findAdmin?.firstName,
-      lastname: findAdmin?.lastName,
-      email: findAdmin?.email,
-      mobile: findAdmin?.mobile,
-      token: generateToken(findAdmin?._id),
-    });
-  } else {
-    throw new Error("Invalid credentials");
-  }
-});
 const handleRefreshToken = expressAsyncHandler(async (req, res) => {
-  let cookie = await req.cookies;
+  try {
+    let cookie = await req.cookies;
 
-  if (!cookie?.refreshToken) {
-    //FIXME:cutsom error handler
-
-    throw new Error("No refresh token in cookies");
-  }
-  const refreshToken = cookie.refreshToken;
-
-  const user = await User.findOne({
-    refreshToken,
-  });
-  if (!user) throw new Error("No refresh token in db or matched");
-  jwt.verify(refreshToken, process.env.JWT_SECRET, (err, decoded) => {
-    if (err || user.id !== decoded.id) {
-      throw new Error("Refresh token is not valid");
+    if (!cookie?.refreshToken) {
+      return res.status(401).json({
+        status: "fail",
+        error: "No refresh token in cookies",
+      });
     }
-    const accessToken = generateToken(user?._id);
-    res.status(200).json({ accessToken });
-  });
+    const refreshToken = cookie.refreshToken;
+
+    const user = await User.findOne({
+      refreshToken,
+    });
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+
+        status: "fail",
+        error: "No refresh token in database or token does not match",
+      });
+    }
+    if (user.emailConfirm === false) {
+      verifyEmailToken(req, res);
+    } else {
+      jwt.verify(refreshToken, process.env.JWT_SECRET, (err, decoded) => {
+        if (err || user.id !== decoded.id) {
+          return res.status(401).json({
+            success: false,
+
+            status: "fail",
+            error: "Refresh token is not valid",
+          });
+        }
+        const accessToken = generateToken(user?._id);
+        res.status(200).json({
+          success: true,
+
+          status: "success",
+          accessToken,
+        });
+      });
+    }
+  } catch (error) {
+    throw new Error(error);
+  }
 });
 
 const logout = expressAsyncHandler(async (req, res) => {
-  const cookie = req.cookies;
-  if (!cookie?.refreshToken) {
-    //FIXME:cutsom error handler
+  try {
+    const cookie = req.cookies;
 
-    throw new Error("No refresh token in cookies");
-  }
-  const refreshToken = cookie.refreshToken;
-  const user = await User.findOne({
-    refreshToken,
-  });
-  if (!user) {
+    // Clear the refresh token cookie
     res.clearCookie("refreshToken", {
       httpOnly: true,
-
-      secure: true,
+      secure: true, // Set to true in production
+      sameSite: "strict",
     });
-    return res.sendStatus(204);
-  }
-  await User.findOneAndUpdate(
-    { refreshToken },
-    {
-      refreshToken: "",
-    }
-  );
-  res.clearCookie("refreshToken", {
-    httpOnly: true,
-    secure: true,
-  });
-  return res.sendStatus(204);
-});
 
+    // Handle standard logout (refresh token in cookies)
+    if (cookie?.refreshToken) {
+      const refreshToken = cookie.refreshToken;
+
+      // Find the user with the refresh token
+      const user = await User.findOne({ refreshToken });
+
+      if (user) {
+        // Clear the refresh token in the database
+        await User.findOneAndUpdate({ refreshToken }, { refreshToken: "" });
+      }
+    }
+
+    // Handle social logout (session-based logout)
+    if (req?.logout) {
+      req.logout((err) => {
+        if (err) {
+          return res.status(500).json({
+            success: false,
+            message: "Failed to log out",
+            error: err,
+          });
+        }
+      });
+    }
+
+    // Respond with success
+    return res.status(200).json({
+      success: true,
+      status: "success",
+      message: "Logged out successfully",
+    });
+  } catch (error) {
+    throw new Error(error);
+  }
+});
 const getallUser = expressAsyncHandler(async (req, res) => {
   try {
     // Filtering
@@ -309,15 +488,21 @@ const getallUser = expressAsyncHandler(async (req, res) => {
     }
 
     const user = await query;
+    const response = {
+      status: "success",
+      success: true,
 
-    // Include only the prices of the min and max products in the response
-    res.json({
+      message: "Users fetched successfully",
+      currentPage: page,
+
       user,
       totalPages,
-    });
+    };
+    setAllUsersCache(req.originalUrl, response);
+    // Include only the prices of the min and max products in the response
+    res.json(response);
   } catch (error) {
-    console.log(error);
-    res.status(400).send({ message: error.message });
+    throw new Error(error);
   }
 });
 const getaUser = expressAsyncHandler(async (req, res) => {
@@ -326,7 +511,13 @@ const getaUser = expressAsyncHandler(async (req, res) => {
 
   try {
     const getaUser = await User.findById(id);
-    res.status(200).json({ getaUser });
+    res.status(200).json({
+      success: true,
+      status: "success",
+
+      message: "User fetched successfully",
+      user: getaUser,
+    });
   } catch (err) {
     //FIXME:cutsom error handler
 
@@ -338,13 +529,27 @@ const getUserDetails = expressAsyncHandler(async (req, res) => {
   validateMongoDbId(id);
 
   try {
-    const getaUser = await User.findById(id).select(
-      "firstname lastname email -_id"
-    );
-    res.status(200).json({ getaUser });
-  } catch (err) {
-    //FIXME:cutsom error handler
+    const getaUser = await User.findById(id)
+      .select("firstname lastname email -_id pharmacies googleId")
+      .populate({
+        path: "pharmacies",
+        select: "-updatedAt -createdAt -toBeDeletedAt  -_id -__v -devicesData", // Specify the fields you want to select from the pharmacies collection
+      });
+    if (!getaUser) {
+      let failResponse = {
+        success: false,
+        status: "fail",
+        error: "User not found",
+      };
 
+      setUserDetailsCache(id, failResponse);
+      return res.status(404).json(failResponse);
+    }
+
+    let response = { success: true, status: "success", user: getaUser };
+    setUserDetailsCache(id, response);
+    res.status(200).json(response);
+  } catch (err) {
     throw new Error(err);
   }
 });
@@ -353,28 +558,54 @@ const updateUser = expressAsyncHandler(async (req, res) => {
   const { id } = req.user;
   validateMongoDbId(id);
   try {
-    const user = await User.findById(id);
+    const user = await User.findById(id).select(
+      "firstname lastname email googleId"
+    );
 
-    if (req?.body?.firstName) user.firstname = req?.body?.firstName;
-    if (req?.body?.lastName) user.lastname = req?.body?.lastName;
+    if (req?.body?.firstname) user.firstname = req?.body?.firstname;
+    if (req?.body?.lastname) user.lastname = req?.body?.lastname;
     if (req?.body?.email) {
       if (req?.body?.email === user.email) {
         res.status(200).json({
+          success: true,
+
           status: "Not Modified",
-          message: "this email is already your email",
+          message: "Email not modified",
+          user: user,
         });
-      } else {
-        user.email = req?.body?.email;
         await user.save();
-        verifyEmailToken(req, res);
+      } else {
+        if (user?.googleId) {
+          return;
+        } else {
+          const searchEmail = await User.findOne({
+            email: req?.body?.email,
+          });
+          if (!searchEmail) {
+            user.email = req?.body?.email;
+            await user.save();
+            verifyEmailToken(req, res);
+          } else {
+            res.status(409).json({
+              success: false,
+              status: "fail",
+              user: user,
+              error: "Email already in use",
+            });
+          }
+        }
       }
     } else {
       user.save();
-      res.status(202).json({ status: "success", message: "updated user data" });
+      res.status(202).json({
+        success: true,
+
+        status: "success",
+        message: "User updated successfully",
+        user: user,
+      });
     }
   } catch (error) {
-    //FIXME:cutsom error handler
-
     throw new Error(error);
   }
 });
@@ -386,12 +617,12 @@ const deleteaUser = expressAsyncHandler(async (req, res) => {
   try {
     const deleteaUser = await User.findByIdAndDelete(id);
     res.status(200).json({
+      success: true,
+
       status: "success",
       message: "User Deleted successfully",
     });
   } catch (err) {
-    //FIXME:cutsom error handler
-
     throw new Error(err);
   }
 });
@@ -410,10 +641,10 @@ const blockUser = expressAsyncHandler(async (req, res) => {
         new: true,
       }
     );
-    res.status(202).json({ status: "success", message: "User Blocked" });
+    res
+      .status(202)
+      .json({ success: true, status: "success", message: "User Blocked" });
   } catch (err) {
-    //FIXME:cutsom error handler
-
     throw new Error(err);
   }
 });
@@ -431,33 +662,96 @@ const unblockUser = expressAsyncHandler(async (req, res) => {
         new: true,
       }
     );
-    res.status(202).json({ status: "success", message: "User unBlocked" });
+    res
+      .status(202)
+      .json({ success: true, status: "success", message: "User unBlocked" });
   } catch (err) {
-    //FIXME:cutsom error handler
-
     throw new Error(err);
   }
 });
 const updatePassword = expressAsyncHandler(async (req, res) => {
   const { _id } = req.user;
-  const { password } = req.body;
+  const { currentPassword, password, passwordConfirm } = req.body;
   validateMongoDbId(_id);
-  const user = await User.findById(_id);
-  if (password) {
+  try {
+    const user = await User.findById(_id);
+
+    if (user?.googleId) {
+      return res.status(403).json({
+        success: false,
+
+        status: "fail",
+        error: "You use Google to sign/log in",
+      });
+    }
+    const passwordRegex =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+
+    if (!passwordRegex.test(password)) {
+      return res.status(400).json({
+        success: false,
+
+        status: "fail",
+        error:
+          "Password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character",
+      });
+    }
+    if (!currentPassword || !password || !passwordConfirm) {
+      return res.status(400).json({
+        success: false,
+
+        status: "fail",
+        error: "All fields are required",
+      });
+    }
+
+    const isMatch = await user.isPasswordMatched(currentPassword);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+
+        status: "fail",
+        error: "Current password is incorrect",
+      });
+    }
+
+    if (password !== passwordConfirm) {
+      return res.status(400).json({
+        success: false,
+
+        status: "fail",
+        error: "Password does not match password confirmation",
+      });
+    }
+
     user.password = password;
     user.passwordChangedAt = Date.now();
-    const updatedPassword = await user.save();
-    res
-      .status(200)
-      .json({ status: "success", message: "password updated successfully" });
-  } else {
-    res.json(user);
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+
+      status: "success",
+      message: "Password updated successfully",
+    });
+  } catch (error) {
+    throw new Error(error);
   }
 });
+
 const forgotPasswordToken = expressAsyncHandler(async (req, res) => {
   const { email } = req.body;
   const user = await User.findOne({ email });
-  if (!user) throw new Error("User Not Found With this email");
+  if (!user) {
+    let responseFail = {
+      success: false,
+
+      status: "fail",
+      error: "User Not Found With this email",
+    };
+    setRestPasswordCache(email, responseFail);
+    return res.status(404).json(responseFail);
+  }
   try {
     const token = await user.createPasswordResetToken();
     await user.save();
@@ -467,44 +761,86 @@ const forgotPasswordToken = expressAsyncHandler(async (req, res) => {
       user.firstname,
       user.lastname
     );
-    console.log(token);
     const data = {
       to: email,
       subject: "Reset Password link",
       html: mail,
     };
     await sendEmail(data);
+    let response = {
+      success: true,
 
-    res.status(200).json({
       status: "success",
       message: "Password reset token sent to your email",
-    });
+    };
+    setRestPasswordCache(email, response);
+
+    res.status(200).json(response);
   } catch (error) {
-    //FIXME:cutsom error handler
     throw new Error(error);
   }
 });
 
 const resetPassword = expressAsyncHandler(async (req, res) => {
-  const { password } = req.body;
-  const { token } = req.params;
-  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
-  const user = await User.findOne({
-    passwordResetToken: hashedToken,
-    passwordResetExpires: {
-      $gt: Date.now(),
-    },
-  });
-  if (!user) throw new Error("token Expired,please try again later");
-  user.password = password;
-  user.passwordChangedAt = Date.now();
-  user.passwordResetToken = undefined;
-  user.passwordResetExpires = undefined;
-  await user.save();
-  res.json({
-    status: "success",
-    message: "password changed successfully",
-  });
+  try {
+    const { password, passwordConfirm } = req.body;
+    const { token } = req.params;
+
+    const passwordRegex =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+
+    if (!passwordRegex.test(password)) {
+      return res.status(400).json({
+        success: false,
+
+        status: "fail",
+        error:
+          "Password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character",
+      });
+    }
+    if (password !== passwordConfirm) {
+      return res.status(400).json({
+        success: false,
+
+        status: "fail",
+        error: "Password does not match password confirmation",
+      });
+    }
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+    const user = await User.findOne({
+      passwordResetToken: hashedToken,
+      passwordResetExpires: {
+        $gt: Date.now(),
+      },
+    });
+    if (!user) {
+      let responseFail = {
+        success: false,
+
+        status: "fail",
+        error: "Token expired or invalid, please try again later",
+      };
+      setPassTokenCache(token, responseFail);
+      return res.status(400).json(responseFail);
+    }
+    user.password = password;
+    user.passwordChangedAt = Date.now();
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    invalidateRestPasswordCache(user.email);
+    await user.save();
+    let responseSuccess = {
+      success: true,
+
+      status: "success",
+      message: "Password changed successfully",
+    };
+    setPassTokenCache(token, responseSuccess);
+
+    res.json(responseSuccess);
+  } catch (error) {
+    throw new Error(error);
+  }
 });
 //! working -- logic not complete
 
@@ -515,7 +851,13 @@ const socialLogin = expressAsyncHandler(async (req, res) => {
     const user = req.user; // Passport adds the authenticated user to req.user
 
     if (!user) {
-      return res.status(400).json({ message: "User not found" });
+      console.warn("User not found in google auth callback fun.");
+      return res.status(400).json({
+        success: false,
+
+        status: "fail",
+        message: "User not found",
+      });
     }
 
     // Generate access token
@@ -536,44 +878,12 @@ const socialLogin = expressAsyncHandler(async (req, res) => {
       maxAge: 72 * 60 * 60 * 1000, // 3 days
     });
 
-    // Send the response with the access token and user info
-    res.status(200).json({
-      id: user._id,
-      firstname: user.firstName,
-      lastname: user.lastName,
-      email: user.email,
-      accessToken: accessToken, // Send the access token
-    });
+    res.redirect(`${FRONTEND_HOST}/user/GoogleAuth?token=${accessToken}`);
   } catch (error) {
-    console.log("Error details:", error);
-    res.status(500).json({ error: error.message });
+    throw new Error(error);
   }
 });
-const socialLogout = expressAsyncHandler((req, res) => {
-  try {
-    // Logout the user by clearing the session
-    req.logout((err) => {
-      if (err) {
-        return res
-          .status(500)
-          .json({ message: "Failed to log out", error: err });
-      }
 
-      // Clear the refresh token cookie
-      res.clearCookie("refreshToken", {
-        httpOnly: true,
-        sameSite: "strict",
-        secure: true, // Set to true in production
-      });
-
-      // Respond with a success message
-      res.status(200).json({ message: "Logged out successfully" });
-    });
-  } catch (error) {
-    console.log("Error details:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
 const getUserPharmacies = expressAsyncHandler(async (req, res) => {
   const { id } = req.user;
   validateMongoDbId(id);
@@ -581,10 +891,9 @@ const getUserPharmacies = expressAsyncHandler(async (req, res) => {
     const user = await User.findById(id)
       .select("pharmacies -_id")
       .populate("pharmacies");
-    res.status(200).json({ user });
+    res.status(200).json({ success: true, status: "success", user });
   } catch (error) {
-    console.log("Error details:", error);
-    res.status(500).json({ error: error.message });
+    throw new Error(error);
   }
 });
 module.exports = {
@@ -606,6 +915,5 @@ module.exports = {
   forgotPasswordToken,
   resetPassword,
   socialLogin,
-  socialLogout,
   getUserPharmacies,
 };

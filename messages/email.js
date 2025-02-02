@@ -1,13 +1,13 @@
 const mailgen = require("mailgen");
 const PORT = process.env.PORT || 4000;
-const HOST = process.env.APP_URL || "pharmacy.APP";
+const FRONTEND_HOST = process.env.HTTP_URL || "pharmacy.APP";
 async function generatePasswordResetMail(token, firstname, lastname) {
   let mailGenerator = new mailgen({
     theme: "default",
     product: {
       // FIXME: EDIT NAME AND LINK
       name: "pharmacy app",
-      link: `https://${HOST}/`,
+      link: `${FRONTEND_HOST}`,
     },
   });
   // TODO: add anther content
@@ -22,7 +22,7 @@ async function generatePasswordResetMail(token, firstname, lastname) {
           color: "#DC4D2F",
           text: "Reset your password",
           // FIXME: EDIT DOMAIN LINK
-          link: `http://${HOST}/user/reset-password/${token}`,
+          link: `${FRONTEND_HOST}/user/resetPassword?token=${token}`,
         },
       },
       // todo
@@ -39,7 +39,7 @@ async function generateVerifyMail(token, firstname, lastname) {
     product: {
       // FIXME: EDIT NAME AND LINK
       name: "pharmacy app	",
-      link: `https://${HOST}/`,
+      link: `${FRONTEND_HOST}`,
       // logo: "https://avatars.githubusercontent.com/u/102463841?v=4",
     },
   });
@@ -57,7 +57,7 @@ async function generateVerifyMail(token, firstname, lastname) {
           text: "verify your email",
           // FIXME: EDIT DOMAIN LINK
 
-          link: `http://${HOST}/user/Email-verification/${token}`,
+          link: `${FRONTEND_HOST}/user/emailVerification/${token}`,
         },
       },
       // todo
@@ -74,7 +74,7 @@ async function generateVerifyMailForPharmacy(token, name) {
     product: {
       // FIXME: EDIT NAME AND LINK
       name: "pharmacy app",
-      link: `https://${HOST}/`,
+      link: `${FRONTEND_HOST}`,
     },
   });
   // TODO: add anther content
@@ -90,7 +90,7 @@ async function generateVerifyMailForPharmacy(token, name) {
           text: "verify your email",
           // FIXME: EDIT DOMAIN LINK
 
-          link: `http://${HOST}/pharmacy/Email-verification/${token}`,
+          link: `${FRONTEND_HOST}/pharmacy/Email-verification/${token}`,
         },
       },
       // todo

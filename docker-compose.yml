@@ -43,6 +43,15 @@ services:
     ports:
       - "27017:27017"
     container_name: db
+  redis:
+    image: redis:latest
+    networks:
+      my_local_network:
+        ipv4_address: 192.168.100.12
+    ports:
+      - "6379:6379"
+    container_name: redis
+
 networks:
   my_local_network:
     driver: bridge

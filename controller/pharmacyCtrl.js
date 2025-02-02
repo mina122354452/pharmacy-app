@@ -8,16 +8,39 @@ const crypto = require("crypto");
 // Get all pharmacies
 
 const getPharmacies = expressAsyncHandler(async (req, res) => {
-  const pharmacies = await Pharmacy.find({});
-  res.json(pharmacies);
+  try {
+    const pharmacies = await Pharmacy.find({});
+    res.json({
+      success: true,
+      status: "success",
+      pharmacies,
+    });
+  } catch (error) {
+    throw new Error(error);
+  }
 });
 
 // Create a pharmacy
-
+//handle validation errors from db
 const createPharmacy = expressAsyncHandler(async (req, res) => {
   try {
     const { name, address, contactNumber, email, openingHours } = req.body;
+    if (!name || !address || !contactNumber || !email || !openingHours) {
+      return res.status(400).json({
+        success: false,
+        status: "fail",
+        error: "All fields are required",
+      });
+    }
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        status: "fail",
+        error: "Invalid email format",
+      });
+    }
     const findPharmacy = await Pharmacy.findOne({ email });
 
     if (!findPharmacy) {
@@ -33,6 +56,8 @@ const createPharmacy = expressAsyncHandler(async (req, res) => {
         toBeDeletedAt: twentyDaysFromNow, // Schedule deletion
       });
       const user = await userModel.findById(req.user._id);
+      console.log(user);
+
       // add to pharmacies array
       if (
         !user.pharmacies.find((pharmacy) => pharmacy._id === newPharmacy._id)
@@ -44,36 +69,46 @@ const createPharmacy = expressAsyncHandler(async (req, res) => {
         verifyEmailToken(req, res);
       } else {
         return res.status(201).json({
+          success: true,
+          status: "success",
           message: "pharmacy created",
+          pharmacy: newPharmacy,
         });
       }
     } else {
       if (findPharmacy.emailConfirm === false) {
         verifyEmailToken(req, res);
       } else {
-        throw new Error("pharmacy with this email is already exist");
+        return res.status(400).json({
+          success: false,
+          status: "fail",
+          error: "pharmacy with this email already exists",
+        });
       }
     }
   } catch (error) {
-    console.log("Error details:", error);
-    res.status(500).json({ error: error.message });
+    throw new Error(error);
   }
 });
 
 const verifyEmailToken = expressAsyncHandler(async (req, res) => {
   const { email } = req.body;
-  console.log(req.body);
 
   const pharmacy = await Pharmacy.findOne({ email });
 
-  if (!pharmacy) throw new Error("pharmacy Not Found With this email");
+  if (!pharmacy) {
+    return res.status(404).json({
+      success: false,
+      status: "fail",
+      error: "Pharmacy not found with this email",
+    });
+  }
   try {
     if (pharmacy.emailConfirm === false) {
       const token = await pharmacy.verifyEmail();
       await pharmacy.save();
       // todo
       let mail = await generateVerifyMailForPharmacy(token, pharmacy.name);
-      console.log(token);
       const data = {
         to: email,
         subject: "verify your pharmacy's Email",
@@ -83,12 +118,15 @@ const verifyEmailToken = expressAsyncHandler(async (req, res) => {
       await sendEmail(data);
 
       res.status(201).json({
-        status: "successfully",
+        success: true,
+        status: "success",
+
         message:
           "we sent pharmacy's email verification , Note:(if you didn't verify the email during 20 days, your pharmacy will be deleted)",
       });
     } else {
       await res.status(200).json({
+        success: true,
         status: "Not Modified",
         message: "your pharmacy's email is already verified",
       });
@@ -106,8 +144,14 @@ const verifyEmail = expressAsyncHandler(async (req, res) => {
       $gt: Date.now(),
     },
   });
-  //FIXME:cutsom error handler
-  if (!pharmacy) throw new Error("token Expired,please try again later");
+  if (!pharmacy) {
+    return res.status(400).json({
+      success: false,
+      status: "fail",
+
+      error: "token Expired,please try again later",
+    });
+  }
   pharmacy.emailConfirm = true;
   pharmacy.emailVerify = undefined;
   pharmacy.emailVerifyExpires = undefined;
@@ -115,7 +159,8 @@ const verifyEmail = expressAsyncHandler(async (req, res) => {
   await pharmacy.save();
   if (pharmacy.emailConfirm === true) {
     res.status(202).json({
-      status: "successfully",
+      status: "success",
+      success: true,
       message: "pharmacy verified successfully",
     });
   }
@@ -125,11 +170,21 @@ const removePharmacy = expressAsyncHandler(async (req, res) => {
   try {
     const { pharmacyId } = req.params;
     const { password } = req.body; // User provides their password
-    if (!password) throw new Error("Please provide your password");
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        status: "fail",
+        error: "Please provide your password",
+      });
+    }
     // Find the pharmacy to be removed
     const pharmacy = await Pharmacy.findById(pharmacyId);
     if (!pharmacy) {
-      return res.status(404).json({ message: "Pharmacy not found" });
+      return res.status(404).json({
+        success: false,
+        status: "fail",
+        error: "Pharmacy not found",
+      });
     }
 
     // Ensure the user owns the pharmacy
@@ -137,13 +192,17 @@ const removePharmacy = expressAsyncHandler(async (req, res) => {
     // Fetch the user's information
     const user = await userModel.findById(req.user._id);
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, status: "fail", error: "User not found" });
     }
 
     // Verify the provided password
     const isPasswordValid = await user.isPasswordMatched(password);
     if (!isPasswordValid) {
-      return res.status(401).json({ message: "Invalid password" });
+      return res
+        .status(401)
+        .json({ success: false, status: "fail", error: "Invalid password" });
     }
 
     // Remove the pharmacy
@@ -155,10 +214,13 @@ const removePharmacy = expressAsyncHandler(async (req, res) => {
     );
     await user.save();
 
-    res.status(200).json({ message: "Pharmacy removed successfully" });
+    res.status(200).json({
+      success: true,
+      status: "success",
+      message: "Pharmacy removed successfully",
+    });
   } catch (error) {
-    console.log("Error details:", error);
-    res.status(500).json({ error: error.message });
+    throw new Error(error);
   }
 });
 
@@ -171,12 +233,15 @@ const getPharmacy = expressAsyncHandler(async (req, res) => {
     );
     if (!pharmacy) {
       console.log(pharmacyId);
-      return res.status(404).json({ message: "Pharmacy not found" });
+      return res.status(404).json({
+        success: false,
+        status: "fail",
+        error: "Pharmacy not found",
+      });
     }
     res.json(pharmacy);
   } catch (error) {
-    console.log("Error details:", error);
-    res.status(500).json({ error: error.message });
+    throw new Error(error);
   }
 });
 
@@ -184,10 +249,21 @@ const updatePharmacy = expressAsyncHandler(async (req, res) => {
   try {
     const { pharmacyId } = req.params;
     const { name, address, contactNumber, email, openingHours } = req.body;
-
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        status: "fail",
+        error: "Invalid email format",
+      });
+    }
     const pharmacy = await Pharmacy.findById(pharmacyId);
     if (!pharmacy) {
-      return res.status(404).json({ message: "Pharmacy not found" });
+      return res.status(404).json({
+        success: false,
+        status: "fail",
+        error: "Pharmacy not found",
+      });
     }
     pharmacy.name = name || pharmacy.name;
     pharmacy.address = address || pharmacy.address;
@@ -199,11 +275,14 @@ const updatePharmacy = expressAsyncHandler(async (req, res) => {
     if (pharmacy.emailConfirm === false) {
       verifyEmailToken(req, res);
     } else {
-      return res.status(200).json({ message: "Pharmacy updated successfully" });
+      return res.status(200).json({
+        success: true,
+        status: "success",
+        message: "Pharmacy updated successfully",
+      });
     }
   } catch (error) {
-    console.log("Error details:", error);
-    res.status(500).json({ error: error.message });
+    throw new Error(error);
   }
 });
 module.exports = {

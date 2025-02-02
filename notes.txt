@@ -1,5 +1,14 @@
+1- apicache for get a user and get user pharmacies
+2- improve validator
+3- improve error handler
+4- test the server security 
+5- handle changes in frontend
 
-2- is owner function 
+
+
+
+
+---------------------------------------
 3- activate function
 4- add medicine function
 5- uptodate medicine db
