@@ -1,20 +1,7 @@
 const express = require("express");
 const passport = require("passport");
 const FRONTEND_HOST = process.env.HTTP_URL;
-const rateLimit = require("express-rate-limit");
-const authLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000,
-  max: 10,
-  handler: (req, res) => {
-    console.warn(`Rate limit exceeded for IP: ${req.ip}`);
-    res.status(429).json({
-      success: false,
-      status: "fail",
-      error: "Too many requests, try again later.",
-    });
-  },
-  headers: true,
-});
+
 const {
   createUser,
   verifyEmailToken,
@@ -53,7 +40,10 @@ const {
   restPasswordCache,
   passTokenCache,
   emailTokenCache,
+  getUserDataCache,
+  userPharmaciesCache,
 } = require("../middlewares/cacheMiddleware.js");
+const { authLimiter } = require("../utils/rateLimiter.js");
 
 const router = express.Router();
 router.post(
@@ -171,8 +161,13 @@ router.get("/refresh", authLimiter, handleRefreshToken);
 router.get("/all-users", authMiddleware, isAdmin, allUsersCache, getallUser);
 router.get("/logout", authLimiter, logout);
 router.get("/details/", authMiddleware, getUserDetailsCache, getUserDetails);
-router.get("/getPharmacies", authMiddleware, getUserPharmacies);
-router.get("/:id", authMiddleware, isAdmin, getaUser);
+router.get(
+  "/getPharmacies",
+  authMiddleware,
+  userPharmaciesCache,
+  getUserPharmacies
+);
+router.get("/:id", authMiddleware, isAdmin, getUserDataCache, getaUser);
 
 router.delete("/:id", authMiddleware, isAdmin, deleteaUser);
 

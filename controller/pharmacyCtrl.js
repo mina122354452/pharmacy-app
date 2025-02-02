@@ -249,13 +249,15 @@ const updatePharmacy = expressAsyncHandler(async (req, res) => {
   try {
     const { pharmacyId } = req.params;
     const { name, address, contactNumber, email, openingHours } = req.body;
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({
-        success: false,
-        status: "fail",
-        error: "Invalid email format",
-      });
+    if (email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({
+          success: false,
+          status: "fail",
+          error: "Invalid email format",
+        });
+      }
     }
     const pharmacy = await Pharmacy.findById(pharmacyId);
     if (!pharmacy) {

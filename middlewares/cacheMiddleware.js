@@ -7,8 +7,9 @@ const allUsersCache = async (req, res, next) => {
     const data = await redisClient.get(cacheKey); // Use async/await instead of callback
 
     if (data !== null) {
+      let response = JSON.parse(data);
       console.log(`🔹 Cache hit for ${cacheKey}`);
-      return res.json(JSON.parse(data));
+      return res.status(response.statusCode).json(response);
     }
 
     next();
@@ -25,9 +26,10 @@ const getUserDetailsCache = async (req, res, next) => {
     const data = await redisClient.get(cacheKey);
 
     if (data !== null) {
-      console.log("data:", data);
+      console.log(data);
 
-      return res.json(JSON.parse(data));
+      let response = JSON.parse(data);
+      return res.status(response.statusCode).json(response);
     }
     console.log(`⚠️ Cache miss for ${cacheKey}`);
 
@@ -46,9 +48,10 @@ const restPasswordCache = async (req, res, next) => {
     const data = await redisClient.get(cacheKey);
 
     if (data !== null) {
-      console.log("data:", data);
+      console.log(data);
 
-      return res.json(JSON.parse(data));
+      let response = JSON.parse(data);
+      return res.status(response.statusCode).json(response);
     }
     console.log(`⚠️ Cache miss for ${cacheKey}`);
 
@@ -67,9 +70,10 @@ const passTokenCache = async (req, res, next) => {
     const data = await redisClient.get(cacheKey);
 
     if (data !== null) {
-      console.log("data:", data);
+      console.log(data);
 
-      return res.json(JSON.parse(data));
+      let response = JSON.parse(data);
+      return res.status(response.statusCode).json(response);
     }
     console.log(`⚠️ Cache miss for ${cacheKey}`);
 
@@ -88,9 +92,10 @@ const emailTokenCache = async (req, res, next) => {
     const data = await redisClient.get(cacheKey);
 
     if (data !== null) {
-      console.log("data:", data);
+      console.log(data);
 
-      return res.json(JSON.parse(data));
+      let response = JSON.parse(data);
+      return res.status(response.statusCode).json(response);
     }
     console.log(`⚠️ Cache miss for ${cacheKey}`);
 
@@ -100,11 +105,56 @@ const emailTokenCache = async (req, res, next) => {
     throw new Error(error);
   }
 };
+const getUserDataCache = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateMongoDbId(id);
+    const cacheKey = `user:${id}`; // Unique cache key for each user
 
+    const data = await redisClient.get(cacheKey);
+
+    if (data !== null) {
+      console.log(data);
+
+      let response = JSON.parse(data);
+      return res.status(response.statusCode).json(response);
+    }
+    console.log(`⚠️ Cache miss for ${cacheKey}`);
+
+    next();
+  } catch (error) {
+    console.error("❌ Redis Middleware Error:", error);
+    throw new Error(error);
+  }
+};
+const userPharmaciesCache = async (req, res, next) => {
+  try {
+    const { id } = req.user;
+    validateMongoDbId(id);
+    const cacheKey = `pharmaciesForUser:${id}`; // Unique cache key for each user
+
+    const data = await redisClient.get(cacheKey);
+
+    if (data !== null) {
+      console.log(data);
+
+      let response = JSON.parse(data);
+      return res.status(response.statusCode).json(response);
+    }
+    console.log(`⚠️ Cache miss for ${cacheKey}`);
+
+    next();
+  } catch (error) {
+    console.error("❌ Redis Middleware Error:", error);
+    throw new Error(error);
+  }
+};
 module.exports = {
   allUsersCache,
   getUserDetailsCache,
   restPasswordCache,
   passTokenCache,
   emailTokenCache,
+  getUserDataCache,
+  userPharmaciesCache,
 };

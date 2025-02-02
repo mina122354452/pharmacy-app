@@ -15,9 +15,9 @@ const passport = require("passport");
 const session = require("express-session");
 const helmet = require("helmet");
 const csrf = require("csurf");
-const rateLimit = require("express-rate-limit");
 const { notFound, errorHandler } = require("./middlewares/errorHandler");
 const redisClient = require("./config/redis");
+const { globalLimiter } = require("./utils/rateLimiter.js");
 const csrfProtection = csrf({
   cookie: {
     httpOnly: false, // Allow frontend to access the CSRF token
@@ -25,28 +25,17 @@ const csrfProtection = csrf({
     sameSite: "Strict", // Prevent CSRF attacks
   },
 });
-const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  handler: (req, res) => {
-    console.warn(`Rate limit exceeded for IP: ${req.ip}`);
-    res.status(429).json({
-      success: false,
-      status: "fail",
-      error: "Too many requests, try again later.",
-    });
-  },
-  headers: true,
-});
 
 app.use(cookieParser());
 app.use(credentials);
 app.use(cors(corsOptions));
 app.use(csrfProtection);
+app.set("trust proxy", true);
 app.use(globalLimiter);
 app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
 require("./config/passport.js");
 app.use(
   session({

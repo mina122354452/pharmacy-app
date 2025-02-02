@@ -10,7 +10,7 @@ yarn-error.log*
 
 # Environment variables
 .env
-notes.txt
+*.txt
 # Build output
 dist/
 build/

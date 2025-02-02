@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const crypto = require("crypto");
 const validator = require("validator");
+const { invalidateUserPharmaciesCache } = require("../utils/UserCache");
 const phoneUtil =
   require("google-libphonenumber").PhoneNumberUtil.getInstance();
 // Shift Sub-schema
@@ -330,6 +331,9 @@ const pharmacySchema = new mongoose.Schema(
 
 // Pre-save hook for validation
 pharmacySchema.pre("save", async function (next) {
+  if (this.isModified()) {
+    invalidateUserPharmaciesCache(this.owner);
+  }
   // Ensure email confirmation reset on change
   if (this.isModified("email")) {
     this.emailConfirm = false;

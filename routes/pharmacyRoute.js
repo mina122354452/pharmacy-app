@@ -1,18 +1,5 @@
 const express = require("express");
-const rateLimit = require("express-rate-limit");
-const paymentLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000,
-  max: 10,
-  handler: (req, res) => {
-    console.warn(`Rate limit exceeded for IP: ${req.ip}`);
-    res.status(429).json({
-      success: false,
-      status: "fail",
-      error: "Too many requests, try again later.",
-    });
-  },
-  headers: true,
-});
+
 /**
  * rate limiter
  * validator
@@ -21,19 +8,6 @@ const paymentLimiter = rateLimit({
  ** Database Query Caching
  */
 
-const PhLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 40,
-  handler: (req, res) => {
-    console.warn(`Rate limit exceeded for IP: ${req.ip}`);
-    res.status(429).json({
-      success: false,
-      status: "fail",
-      error: "Too many requests, try again later.",
-    });
-  },
-  headers: true,
-});
 const {
   createPharmacy,
   getPharmacies,
@@ -48,6 +22,7 @@ const {
   isOwner,
   isActivated,
 } = require("../middlewares/authMiddleware.js");
+const { PhLimiter } = require("../utils/rateLimiter.js");
 
 const router = express.Router();
 router.get("/all", authMiddleware, isAdmin, getPharmacies);

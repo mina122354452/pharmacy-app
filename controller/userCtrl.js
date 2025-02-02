@@ -20,7 +20,10 @@ const {
   setPassTokenCache,
   setEmailTokenCache,
   setEmailVerificationCache,
-} = require("../utils/setUserCache");
+  setUserDataCache,
+  setUserPharmaciesCache,
+  invalidEmailVerificationCache,
+} = require("../utils/UserCache");
 const redisClient = require("../config/redis");
 const createUser = expressAsyncHandler(async (req, res) => {
   try {
@@ -175,8 +178,8 @@ const verifyEmailToken = expressAsyncHandler(async (req, res) => {
 
   if (data !== null) {
     console.log("data:", data);
-
-    return res.json(JSON.parse(data));
+    let response = JSON.parse(data);
+    return res.status(response.statusCode).json(response);
   }
   console.log(req.body);
 
@@ -185,12 +188,13 @@ const verifyEmailToken = expressAsyncHandler(async (req, res) => {
 
     if (!user) {
       let failResponse = {
+        statusCode: 404,
         success: false,
         status: "fail",
         message: "User Not Found With this email",
       };
       setEmailVerificationCache(email, failResponse);
-      return res.status(404).json(failResponse);
+      return res.status(failResponse.statusCode).json(failResponse);
     }
 
     if (user.emailConfirm === false) {
@@ -207,6 +211,8 @@ const verifyEmailToken = expressAsyncHandler(async (req, res) => {
       console.log(process.env.password);
       await sendEmail(data);
       let successResponse = {
+        statusCode: 200,
+
         status: "success",
         success: true,
 
@@ -215,16 +221,20 @@ const verifyEmailToken = expressAsyncHandler(async (req, res) => {
       };
       setEmailVerificationCache(email, successResponse);
 
-      res.status(200).json(successResponse);
+      res.status(successResponse.statusCode).json(successResponse);
     } else {
       let notModifiedResponse = {
+        statusCode: 200,
+
         success: true,
         status: "Not Modified",
         message: "your email is already verified",
       };
       setEmailVerificationCache(email, notModifiedResponse);
 
-      await res.status(200).json(notModifiedResponse);
+      await res
+        .status(notModifiedResponse.statusCode)
+        .json(notModifiedResponse);
     }
   } catch (error) {
     throw new Error(error);
@@ -243,13 +253,14 @@ const verifyEmail = expressAsyncHandler(async (req, res) => {
 
     if (!user) {
       let failResponse = {
+        statusCode: 400,
         success: false,
         status: "fail",
         error:
           "Token expired or Invalid link verification, please try again later",
       };
       setEmailTokenCache(token, failResponse);
-      return res.status(400).json(failResponse);
+      return res.status(failResponse.statusCode).json(failResponse);
     }
 
     user.emailConfirm = true;
@@ -261,14 +272,15 @@ const verifyEmail = expressAsyncHandler(async (req, res) => {
 
     if (user.emailConfirm === true) {
       let successResponse = {
+        statusCode: 202,
         status: "success",
         success: true,
 
         message: "User email verified successfully, you can login now",
       };
       setEmailTokenCache(token, successResponse);
-
-      res.status(202).json(successResponse);
+      invalidEmailVerificationCache(user.email);
+      res.status(successResponse.statusCode).json(successResponse);
     }
   } catch (error) {
     throw new Error(error);
@@ -489,6 +501,7 @@ const getallUser = expressAsyncHandler(async (req, res) => {
 
     const user = await query;
     const response = {
+      statusCode: 200,
       status: "success",
       success: true,
 
@@ -500,7 +513,7 @@ const getallUser = expressAsyncHandler(async (req, res) => {
     };
     setAllUsersCache(req.originalUrl, response);
     // Include only the prices of the min and max products in the response
-    res.json(response);
+    res.status(response.statusCode).json(response);
   } catch (error) {
     throw new Error(error);
   }
@@ -510,17 +523,31 @@ const getaUser = expressAsyncHandler(async (req, res) => {
   validateMongoDbId(id);
 
   try {
-    const getaUser = await User.findById(id);
-    res.status(200).json({
-      success: true,
-      status: "success",
+    const getaUser = await User.findById(id).populate("pharmacies");
 
-      message: "User fetched successfully",
-      user: getaUser,
-    });
+    if (!getaUser) {
+      let failResponse = {
+        statusCode: 404,
+        success: false,
+        status: "fail",
+        error: "User not found",
+      };
+      setUserDataCache(id, failResponse);
+      res.status(failResponse.statusCode).json(failResponse);
+    } else {
+      let successResponse = {
+        statusCode: 200,
+        success: true,
+        status: "success",
+
+        message: "User fetched successfully",
+        user: getaUser,
+      };
+      setUserDataCache(id, successResponse);
+
+      res.status(successResponse.statusCode).json(successResponse);
+    }
   } catch (err) {
-    //FIXME:cutsom error handler
-
     throw new Error(err);
   }
 });
@@ -537,18 +564,24 @@ const getUserDetails = expressAsyncHandler(async (req, res) => {
       });
     if (!getaUser) {
       let failResponse = {
+        statusCode: 404,
         success: false,
         status: "fail",
         error: "User not found",
       };
 
       setUserDetailsCache(id, failResponse);
-      return res.status(404).json(failResponse);
+      return res.status(failResponse.statusCode).json(failResponse);
     }
 
-    let response = { success: true, status: "success", user: getaUser };
+    let response = {
+      statusCode: 200,
+      success: true,
+      status: "success",
+      user: getaUser,
+    };
     setUserDetailsCache(id, response);
-    res.status(200).json(response);
+    res.status(response.statusCode).json(response);
   } catch (err) {
     throw new Error(err);
   }
@@ -744,13 +777,14 @@ const forgotPasswordToken = expressAsyncHandler(async (req, res) => {
   const user = await User.findOne({ email });
   if (!user) {
     let responseFail = {
+      statusCode: 404,
       success: false,
 
       status: "fail",
       error: "User Not Found With this email",
     };
     setRestPasswordCache(email, responseFail);
-    return res.status(404).json(responseFail);
+    return res.status(responseFail.statusCode).json(responseFail);
   }
   try {
     const token = await user.createPasswordResetToken();
@@ -767,15 +801,16 @@ const forgotPasswordToken = expressAsyncHandler(async (req, res) => {
       html: mail,
     };
     await sendEmail(data);
-    let response = {
+    let successResponse = {
+      statusCode: 200,
       success: true,
 
       status: "success",
       message: "Password reset token sent to your email",
     };
-    setRestPasswordCache(email, response);
+    setRestPasswordCache(email, successResponse);
 
-    res.status(200).json(response);
+    res.status(successResponse.statusCode).json(successResponse);
   } catch (error) {
     throw new Error(error);
   }
@@ -815,13 +850,14 @@ const resetPassword = expressAsyncHandler(async (req, res) => {
     });
     if (!user) {
       let responseFail = {
+        statusCode: 400,
         success: false,
 
         status: "fail",
         error: "Token expired or invalid, please try again later",
       };
       setPassTokenCache(token, responseFail);
-      return res.status(400).json(responseFail);
+      return res.status(responseFail.statusCode).json(responseFail);
     }
     user.password = password;
     user.passwordChangedAt = Date.now();
@@ -830,19 +866,19 @@ const resetPassword = expressAsyncHandler(async (req, res) => {
     invalidateRestPasswordCache(user.email);
     await user.save();
     let responseSuccess = {
+      statusCode: 200,
       success: true,
 
       status: "success",
       message: "Password changed successfully",
     };
-    setPassTokenCache(token, responseSuccess);
+    setPassTokenCache(responseSuccess.statusCode, responseSuccess);
 
     res.json(responseSuccess);
   } catch (error) {
     throw new Error(error);
   }
 });
-//! working -- logic not complete
 
 const socialLogin = expressAsyncHandler(async (req, res) => {
   console.log("Google profile received:", req.user);
@@ -891,7 +927,25 @@ const getUserPharmacies = expressAsyncHandler(async (req, res) => {
     const user = await User.findById(id)
       .select("pharmacies -_id")
       .populate("pharmacies");
-    res.status(200).json({ success: true, status: "success", user });
+    if (user.pharmacies.length > 0) {
+      let successResponse = {
+        statusCode: 200,
+        success: true,
+        status: "success",
+        pharmacies: user.pharmacies,
+      };
+      setUserPharmaciesCache(id, successResponse);
+      res.status(successResponse.statusCode).json(successResponse);
+    } else {
+      let failResponse = {
+        statusCode: 404,
+        success: false,
+        status: "fail",
+        pharmacies: user.pharmacies,
+      };
+      setUserPharmaciesCache(id, failResponse);
+      res.status(failResponse.statusCode).json(failResponse);
+    }
   } catch (error) {
     throw new Error(error);
   }

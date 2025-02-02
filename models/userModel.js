@@ -2,7 +2,10 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
 const validator = require("validator");
-const { invalidateUserCache } = require("../utils/setUserCache");
+const {
+  invalidateUserCache,
+  invalidateUserDataCache,
+} = require("../utils/UserCache");
 
 // Declare the Schema of the Mongo model
 var userSchema = new mongoose.Schema(
@@ -106,6 +109,7 @@ userSchema.pre("save", function (next) {
     console.log("Modified fields:", this.modifiedPaths());
 
     // Invalidate cache for this user
+    invalidateUserDataCache(this._id);
     invalidateUserCache(this._id);
   }
 
